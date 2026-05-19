@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Laurel's Treadmill Tracker</title>
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="https://uploads.onecompiler.io/44jajt6dm/44ppupxpf/Clipboard%20May%2018,%202026%20at%2010.10%E2%80%AFPM.png">
+
+  <!-- Patrick Hand Font -->
+  <link href="https://fonts.googleapis.com/css2?family=Patrick+Hand&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg-color: #000000;
+      --card-bg: #111111;
+      --card-border: #333333;
+      --green: #16a34a;
+      --red: #dc2626;
+      --blue: #2563eb;
+      --orange: #d97706;
+      --gray: #4b5563;
+      --text-main: #ffffff;
+      --text-muted: #a3a3a3;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      /* Force Patrick Hand on EVERYTHING */
+      font-family: 'Patrick Hand', cursive; 
+    }
+
+    body {
+      background: var(--bg-color);
+      color: var(--text-main);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      overflow: hidden;
+      padding: 16px;
+    }
+
+    /* Black Theme Card */
+    .card {
+      width: min(500px, 92vw);
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 24px;
+      padding: 35px 25px;
+      text-align: center;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+      position: relative;
+      z-index: 10;
+    }
+
+    h1 {
+      font-size: 38px;
+      margin-bottom: 20px;
+      color: #fff;
+    }
+
+    /* Stopwatch */
+    .stopwatch {
+      font-size: clamp(55px, 12vw, 80px);
+      margin: 15px 0;
+      color: #fff;
+    }
+
+    /* Progress Bar */
+    .progress-wrapper {
+      margin: 25px 0 15px;
+    }
+
+    .progress-bg {
+      height: 18px;
+      width: 100%;
+      background: #222;
+      border-radius: 99px;
+      overflow: hidden;
+      border: 1px solid #333;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #22c55e, #16a34a);
+      border-radius: 99px;
+      transition: width 0.3s ease-out;
+    }
+
+    .status-text {
+      color: var(--text-muted);
+      font-size: 22px;
+      margin-bottom: 25px;
+    }
+
+    /* Buttons */
+    .controls {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    button {
+      padding: 12px 20px;
+      border-radius: 14px;
+      border: none;
+      font-size: 22px;
+      color: white;
+      cursor: pointer;
+      transition: transform 0.1s, filter 0.2s;
+    }
+
+    button:active { transform: scale(0.95); }
+    button:hover { filter: brightness(1.1); }
+
+    .btn-main { background: var(--green); flex-grow: 1; font-size: 26px; }
+    .btn-main.stop { background: var(--red); }
+    .btn-goal { background: var(--blue); }
+    
+    /* Goal Reached Controls Container */
+    .goal-controls {
+      display: none; /* Hidden by default */
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 15px;
+      width: 100%;
+    }
+
+    .btn-add { background: var(--orange); width: 100%; }
+    .btn-done { background: var(--gray); width: 100%; }
+
+    /* Modal / Popup */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.85);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .modal {
+      background: #111;
+      padding: 30px;
+      border-radius: 20px;
+      width: 90%;
+      max-width: 350px;
+      text-align: center;
+      border: 1px solid #333;
+      transform: translateY(20px);
+      transition: transform 0.3s;
+    }
+
+    .modal h3 { margin-bottom: 15px; font-size: 30px; color: #fff; }
+    .modal button { width: 100%; margin-bottom: 10px; background: #222; border: 1px solid #444; }
+    
+    .custom-goal-container {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+      margin-top: 10px;
+    }
+    
+    .custom-goal-container input {
+      flex-grow: 1;
+      background: #000;
+      border: 1px solid #444;
+      color: #fff;
+      border-radius: 12px;
+      padding: 10px;
+      font-size: 20px;
+      text-align: center;
+      outline: none;
+    }
+    
+    .custom-goal-container button {
+      width: auto;
+      margin: 0;
+      background: var(--green);
+      border: none;
+    }
+
+    .modal .btn-close { background: var(--red); margin-top: 15px; border: none; }
+
+    /* Canvas for Confetti */
+    canvas {
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      pointer-events: none;
+      z-index: 9999;
+    }
+  </style>
+</head>
+
+<body>
+
+<canvas id="fx"></canvas>
+
+<div class="card">
+  <h1>Laurel's Treadmill Tracker</h1>
+
+  <div class="stopwatch" id="time">00:00:00</div>
+
+  <div class="progress-wrapper">
+    <div class="progress-bg">
+      <div class="progress-bar" id="bar"></div>
+    </div>
+  </div>
+
+  <div class="status-text" id="goalText">Syncing...</div>
+
+  <div class="controls">
+    <button class="btn-goal" onclick="openMenu()">Set Goal</button>
+    <button id="mainBtn" class="btn-main" onclick="toggleStart()">START</button>
+  </div>
+  
+  <!-- Pop up controls when goal is reached -->
+  <div class="goal-controls" id="goalControls">
+    <button class="btn-add" onclick="addFive()">+5 Minutes</button>
+    <button class="btn-done" onclick="finishWorkout()">Done</button>
+  </div>
+</div>
+
+<!-- GOAL MENU -->
+<div class="modal-overlay" id="menuOverlay">
+  <div class="modal" id="menuModal">
+    <h3>Set Daily Goal</h3>
+    <button onclick="setGoal(30)">30 Minutes</button>
+    <button onclick="setGoal(45)">45 Minutes</button>
+    <button onclick="setGoal(60)">60 Minutes</button>
+    
+    <div class="custom-goal-container">
+      <input type="number" id="customGoalInput" placeholder="Custom mins" min="1">
+      <button onclick="setCustomGoal()">Set</button>
+    </div>
+
+    <button class="btn-close" onclick="closeMenu()">Cancel</button>
+  </div>
+</div>
+
+<script>
+// --- SETTINGS ---
+const firebaseURL = "https://laurel-s-treadmill-workout-default-rtdb.firebaseio.com/treadmill.json";
+const CELEBRATION_DURATION = 5000;
+
+let state = {
+  total: 0,
+  running: false,
+  startTime: null,
+  goal: 3600000 // 60 mins default
+};
+
+let hasCelebrated = false;
+
+// --- CANVAS CONFETTI ---
+const canvas = document.getElementById("fx");
+const ctx = canvas.getContext("2d");
+let particles = [];
+
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+const colors = ["#22c55e", "#3b82f6", "#ec4899", "#eab308", "#ffffff"];
+
+class Particle {
+  constructor() {
+    this.x = Math.random() * canvas.width;
+    this.y = -10;
+    this.vx = (Math.random() - 0.5) * 5;
+    this.vy = (Math.random() * 3) + 2;
+    this.size = Math.random() * 6 + 4;
+    this.color = colors[Math.floor(Math.random() * colors.length)];
+    this.tilt = Math.floor(Math.random() * 10) - 10;
+    this.tiltAngle = 0;
+    this.tiltAngleInc = (Math.random() * 0.07) + 0.05;
+  }
+  update() {
+    this.tiltAngle += this.tiltAngleInc;
+    this.y += this.vy;
+    this.x += Math.sin(this.tiltAngle) * 2;
+    this.tilt = Math.sin(this.tiltAngle) * 15;
+  }
+  draw() {
+    ctx.beginPath();
+    ctx.lineWidth = this.size;
+    ctx.strokeStyle = this.color;
+    ctx.moveTo(this.x + this.tilt + this.size, this.y);
+    ctx.lineTo(this.x + this.tilt, this.y + this.tilt + this.size);
+    ctx.stroke();
+  }
+}
+
+function celebrate() {
+  if (hasCelebrated) return;
+  hasCelebrated = true;
+  let end = Date.now() + CELEBRATION_DURATION;
+  
+  (function frame() {
+    if (Date.now() < end && particles.length < 150) {
+      particles.push(new Particle(), new Particle());
+    }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    particles.forEach((p, index) => {
+      p.update();
+      p.draw();
+      if (p.y > canvas.height) particles.splice(index, 1);
+    });
+    if (particles.length > 0) requestAnimationFrame(frame);
+  }());
+}
+
+// --- FIREBASE LOGIC ---
+async function loadData() {
+  try {
+    let r = await fetch(firebaseURL);
+    let d = await r.json();
+    if (d) {
+      state.total = d.total || 0;
+      state.running = d.running || false;
+      state.startTime = d.startTime || null;
+      state.goal = d.goal || state.goal;
+    }
+  } catch(e) {
+    console.error("Firebase load failed.");
+  }
+}
+
+async function saveData() {
+  try {
+    await fetch(firebaseURL, { method: "PUT", body: JSON.stringify(state) });
+  } catch(e) {
+    console.error("Firebase save failed.");
+  }
+}
+
+// --- TIMER LOGIC ---
+function formatTime(ms) {
+  let s = Math.floor(ms / 1000);
+  let h = Math.floor(s / 3600);
+  let m = Math.floor((s % 3600) / 60);
+  let sec = s % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+}
+
+function updateUI() {
+  let liveTime = state.total;
+  if (state.running && state.startTime) {
+    liveTime += Date.now() - state.startTime;
+  }
+
+  // Time
+  document.getElementById("time").innerText = formatTime(liveTime);
+
+  // Progress Bar
+  let percent = Math.min((liveTime / state.goal) * 100, 100);
+  document.getElementById("bar").style.width = percent + "%";
+
+  // Goal Text & Bonus Buttons
+  let left = Math.max(state.goal - liveTime, 0);
+  const goalControls = document.getElementById("goalControls");
+
+  if (left > 0) {
+    document.getElementById("goalText").innerText = `${Math.ceil(left / 60000)} min left`;
+    goalControls.style.display = "none";
+    hasCelebrated = false;
+  } else {
+    document.getElementById("goalText").innerText = "Goal Reached!";
+    goalControls.style.display = "flex";
+    if (!hasCelebrated) celebrate();
+  }
+
+  // Start/Stop Button
+  const btn = document.getElementById("mainBtn");
+  if (state.running) {
+    btn.innerText = "STOP";
+    btn.classList.add("stop");
+  } else {
+    btn.innerText = "START";
+    btn.classList.remove("stop");
+  }
+}
+
+// --- CONTROLS ---
+async function toggleStart() {
+  if (!state.running) {
+    state.startTime = Date.now();
+    state.running = true;
+  } else {
+    state.total += Date.now() - state.startTime;
+    state.running = false;
+    state.startTime = null;
+  }
+  updateUI();
+  await saveData(); // Only uploads to database on click
+}
+
+async function setGoal(mins) {
+  state.goal = mins * 60000;
+  closeMenu();
+  updateUI();
+  await saveData(); 
+}
+
+async function setCustomGoal() {
+  let inputVal = document.getElementById("customGoalInput").value;
+  if (inputVal && !isNaN(inputVal) && inputVal > 0) {
+    state.goal = inputVal * 60000;
+    closeMenu();
+    updateUI();
+    await saveData(); 
+  }
+}
+
+async function addFive() {
+  // Adds 5 minutes to the goal (automatically hides button until reached again)
+  state.goal += 5 * 60000; 
+  updateUI();
+  await saveData(); 
+}
+
+async function finishWorkout() {
+  // Reset all data
+  state = {
+    total: 0,
+    running: false,
+    startTime: null,
+    goal: 3600000 // back to 60 mins default
+  };
+  hasCelebrated = false;
+  
+  await saveData(); // Clears database
+  window.location.reload(); // Refreshes everything
+}
+
+// --- MODAL MENU ---
+const overlay = document.getElementById("menuOverlay");
+const modal = document.getElementById("menuModal");
+
+function openMenu() {
+  overlay.style.display = "flex";
+  setTimeout(() => {
+    overlay.style.opacity = "1";
+    modal.style.transform = "translateY(0)";
+  }, 10);
+}
+
+function closeMenu() {
+  overlay.style.opacity = "0";
+  modal.style.transform = "translateY(20px)";
+  setTimeout(() => {
+    overlay.style.display = "none";
+  }, 300);
+}
+
+// --- INITIALIZATION ---
+async function init() {
+  await loadData();
+  
+  // Updates UI incredibly smoothly 30x a second locally without using internet data
+  setInterval(updateUI, 33);
+}
+
+init();
+</script>
+
+</body>
+</html>
