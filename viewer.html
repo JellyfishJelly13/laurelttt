@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Laurel's Treadmill Tracker</title>
+  <title>Laurel's Treadmill Tracker (Viewer)</title>
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="https://uploads.onecompiler.io/44jajt6dm/44ppupxpf/Clipboard%20May%2018,%202026%20at%2010.10%E2%80%AFPM.png">
@@ -332,12 +332,13 @@
 // --- SETTINGS ---
 const firebaseURL = "https://laurel-s-treadmill-workout-default-rtdb.firebaseio.com/treadmill.json";
 const CELEBRATION_DURATION = 5000;
+const DEFAULT_GOAL_MINUTES = 60; // Keep matched with Controller
 
 let state = {
   total: 0,
   running: false,
   startTime: null,
-  goal: 3600000
+  goal: DEFAULT_GOAL_MINUTES * 60000
 };
 
 let hasCelebrated = false;
@@ -347,9 +348,7 @@ let syncInterval = null;
 // --- LOADING SCREEN ---
 function hideLoadingScreen() {
   const loading = document.getElementById("loadingScreen");
-
   loading.classList.add("hidden");
-
   setTimeout(() => {
     loading.style.display = "none";
   }, 350);
@@ -364,7 +363,6 @@ function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 }
-
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
@@ -382,14 +380,12 @@ class Particle {
     this.tiltAngle = 0;
     this.tiltAngleInc = (Math.random() * 0.07) + 0.05;
   }
-
   update() {
     this.tiltAngle += this.tiltAngleInc;
     this.y += this.vy;
     this.x += Math.sin(this.tiltAngle) * 2;
     this.tilt = Math.sin(this.tiltAngle) * 15;
   }
-
   draw() {
     ctx.beginPath();
     ctx.lineWidth = this.size;
@@ -402,7 +398,6 @@ class Particle {
 
 function celebrate() {
   if (hasCelebrated) return;
-
   hasCelebrated = true;
   let end = Date.now() + CELEBRATION_DURATION;
   
@@ -410,16 +405,12 @@ function celebrate() {
     if (Date.now() < end && particles.length < 150) {
       particles.push(new Particle(), new Particle());
     }
-
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
     particles.forEach((p, index) => {
       p.update();
       p.draw();
-
       if (p.y > canvas.height) particles.splice(index, 1);
     });
-
     if (particles.length > 0) requestAnimationFrame(frame);
   }());
 }
@@ -434,12 +425,13 @@ async function loadData() {
       state.total = d.total || 0;
       state.running = d.running || false;
       state.startTime = d.startTime || null;
-      state.goal = d.goal || 3600000;
+      // FIX: Properly parses '0' so Freestyle Mode syncs correctly!
+      state.goal = d.goal !== undefined ? d.goal : (DEFAULT_GOAL_MINUTES * 60000);
     } else {
       state.total = 0;
       state.running = false;
       state.startTime = null;
-      state.goal = 3600000;
+      state.goal = DEFAULT_GOAL_MINUTES * 60000;
     }
   } catch (e) {
     console.error("Firebase connection error.");
@@ -457,21 +449,23 @@ function formatTime(ms) {
   let h = Math.floor(s / 3600);
   let m = Math.floor((s % 3600) / 60);
   let sec = s % 60;
-
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
 
 // --- UI UPDATER ---
 function updateUI() {
   let liveTime = state.total;
-
   if (state.running && state.startTime) {
     liveTime += Date.now() - state.startTime;
   }
 
   const notRunningView = document.getElementById("notRunningView");
   const runningView = document.getElementById("runningView");
+  const bar = document.getElementById("bar");
+  const goalText = document.getElementById("goalText");
+  const etaText = document.getElementById("etaText");
 
+  // Show "Not Running" screen
   if (state.total === 0 && !state.running) {
     notRunningView.style.display = "block";
     runningView.style.display = "none";
@@ -479,67 +473,61 @@ function updateUI() {
     return; 
   }
 
+  // Show Active Run screen
   notRunningView.style.display = "none";
   runningView.style.display = "block";
-
   document.getElementById("time").innerText = formatTime(liveTime);
 
-  let percent = Math.min((liveTime / state.goal) * 100, 100);
-  document.getElementById("bar").style.width = percent + "%";
+  // NO GOAL / FREESTYLE MODE LOGIC (Matches Controller perfectly)
+  if (state.goal === 0) {
+    bar.style.width = "0%";
+    goalText.innerText = "No Goal";
+    etaText.innerText = "Finish time unknown";
+    etaText.style.color = "var(--text-muted)";
+    hasCelebrated = false;
+  } 
+  // STANDARD GOAL LOGIC
+  else {
+    let percent = Math.min((liveTime / state.goal) * 100, 100);
+    bar.style.width = percent + "%";
 
-  let left = Math.max(state.goal - liveTime, 0);
+    let left = Math.max(state.goal - liveTime, 0);
 
-  const goalText = document.getElementById("goalText");
-  const etaText = document.getElementById("etaText");
-
-  if (left > 0) {
-    goalText.innerText = `${Math.ceil(left / 60000)} min left`;
-    
-    if (state.running) {
-      let finishDate = new Date(Date.now() + left);
-
-      let timeString = finishDate.toLocaleTimeString([], {
-        hour: 'numeric',
-        minute: '2-digit'
-      });
-
-      etaText.innerText = `Estimated finish: ${timeString}`;
-      etaText.style.color = "var(--green)";
+    if (left > 0) {
+      goalText.innerText = `${Math.ceil(left / 60000)} min left`;
+      
+      if (state.running) {
+        let finishDate = new Date(Date.now() + left);
+        let timeString = finishDate.toLocaleTimeString([], {
+          hour: 'numeric',
+          minute: '2-digit'
+        });
+        etaText.innerText = `Estimated finish: ${timeString}`;
+        etaText.style.color = "var(--green)";
+      } else {
+        etaText.innerText = "Paused";
+        etaText.style.color = "var(--orange)";
+      }
+      hasCelebrated = false;
     } else {
-      etaText.innerText = "Paused";
-      etaText.style.color = "var(--orange)";
+      goalText.innerText = "Goal Reached!";
+      etaText.innerText = "";
+
+      if (!hasCelebrated) celebrate();
     }
-
-  } else {
-    goalText.innerText = "Goal Reached!";
-    etaText.innerText = "";
-
-    if (!hasCelebrated) celebrate();
   }
-  
-  if (liveTime < state.goal) hasCelebrated = false;
 }
 
 // --- LATENCY CONTROLS ---
 function changeLatency(ms) {
   syncLatency = ms;
-  
-  let label = "Custom";
-
-  if (ms === 1000) label = "Low";
-  if (ms === 2500) label = "Medium";
-  if (ms === 5000) label = "High";
-
-  document.getElementById("latencyBtnText").innerText = `Sync Latency: ${label} (${ms}ms)`;
-  
+  document.getElementById("latencyBtnText").innerText = `Sync Interval`;
   startPolling();
-
   closeMenu('latencyOverlay', 'latencyModal');
 }
 
 function setCustomLatency() {
   let val = parseInt(document.getElementById("customLatencyInput").value);
-
   if (val && val >= 500) {
     changeLatency(val);
     document.getElementById("customLatencyInput").value = "";
@@ -550,9 +538,7 @@ function setCustomLatency() {
 function openMenu(overlayId, modalId) {
   const overlay = document.getElementById(overlayId);
   const modal = document.getElementById(modalId);
-
   overlay.style.display = "flex";
-
   setTimeout(() => {
     overlay.style.opacity = "1";
     modal.style.transform = "translateY(0)";
@@ -562,10 +548,8 @@ function openMenu(overlayId, modalId) {
 function closeMenu(overlayId, modalId) {
   const overlay = document.getElementById(overlayId);
   const modal = document.getElementById(modalId);
-
   overlay.style.opacity = "0";
   modal.style.transform = "translateY(20px)";
-
   setTimeout(() => {
     overlay.style.display = "none";
   }, 300);
@@ -574,15 +558,10 @@ function closeMenu(overlayId, modalId) {
 // --- INITIALIZATION ---
 async function init() {
   await loadData();
-
   updateUI();
-
-  setTimeout(() => {
-    hideLoadingScreen();
-  }, 2000);
   
+  setTimeout(() => { hideLoadingScreen(); }, 2000);
   setInterval(updateUI, 33);
-
   startPolling();
 }
 
