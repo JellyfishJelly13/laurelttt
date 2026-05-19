@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Laurel's Treadmill Tracker (Viewer)</title>
+  <title>Laurel's Treadmill Tracker</title>
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="https://uploads.onecompiler.io/44jajt6dm/44ppupxpf/Clipboard%20May%2018,%202026%20at%2010.10%E2%80%AFPM.png">
@@ -17,6 +17,7 @@
       --card-bg: #111111;
       --card-border: #333333;
       --green: #16a34a;
+      --red: #dc2626;
       --orange: #d97706;
       --text-main: #ffffff;
       --text-muted: #a3a3a3;
@@ -48,7 +49,7 @@
       background: var(--card-bg);
       border: 1px solid var(--card-border);
       border-radius: 24px;
-      padding: 35px 25px 25px;
+      padding: 35px 25px;
       text-align: center;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
       position: relative;
@@ -105,8 +106,102 @@
 
     .eta-text {
       font-size: 20px;
-      margin-bottom: 5px;
+      margin-bottom: 15px;
     }
+
+    /* Latency Text Link */
+    .latency-link {
+      margin-top: 20px;
+      font-size: 18px;
+      color: var(--text-muted);
+      cursor: pointer;
+      text-decoration: underline;
+      display: inline-block;
+      transition: color 0.2s;
+    }
+    
+    .latency-link:hover { color: #fff; }
+
+    /* Modal / Popup */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.85);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .modal {
+      background: #111;
+      padding: 30px;
+      border-radius: 20px;
+      width: 90%;
+      max-width: 350px;
+      text-align: center;
+      border: 1px solid #333;
+      transform: translateY(20px);
+      transition: transform 0.3s;
+    }
+
+    .modal h3 { margin-bottom: 15px; font-size: 30px; color: #fff; }
+    
+    .modal-subtitle {
+      color: var(--text-muted);
+      font-size: 18px;
+      margin-bottom: 20px;
+      line-height: 1.2;
+    }
+
+    .modal button { 
+      width: 100%; 
+      margin-bottom: 10px; 
+      background: #222; 
+      border: 1px solid #444; 
+      padding: 12px 20px;
+      border-radius: 14px;
+      font-size: 22px;
+      color: white;
+      cursor: pointer;
+    }
+    .modal button:active { transform: scale(0.95); }
+    
+    .custom-input-group {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+      margin-top: 10px;
+    }
+    
+    .custom-input-group input {
+      flex-grow: 1;
+      width: 50%;
+      background: #000;
+      border: 1px solid #444;
+      color: #fff;
+      border-radius: 12px;
+      padding: 10px;
+      font-size: 20px;
+      text-align: center;
+      outline: none;
+    }
+
+    /* Hide number input arrows */
+    input[type=number]::-webkit-inner-spin-button, 
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    
+    .custom-input-group button {
+      width: auto;
+      margin: 0;
+      background: var(--green);
+      border: none;
+      padding: 10px 15px;
+    }
+
+    .modal .btn-close { background: var(--red); margin-top: 15px; border: none; }
 
     /* Canvas for Confetti */
     canvas {
@@ -143,6 +238,28 @@
     <div class="status-text" id="goalText">Connecting...</div>
     <div class="eta-text" id="etaText"></div>
   </div>
+
+  <!-- Latency Control Button -->
+  <div class="latency-link" id="latencyBtnText" onclick="openMenu('latencyOverlay', 'latencyModal')">Sync Interval</div>
+</div>
+
+<!-- LATENCY MENU -->
+<div class="modal-overlay" id="latencyOverlay">
+  <div class="modal" id="latencyModal">
+    <h3>Sync Interval</h3>
+    <div class="modal-subtitle">Lower intervals updates faster on this screen, but uses more database network bandwidth.</div>
+    
+    <button onclick="changeLatency(1000)">Low (1000ms)</button>
+    <button onclick="changeLatency(2500)">Medium (2500ms)</button>
+    <button onclick="changeLatency(5000)">High (5000ms)</button>
+    
+    <div class="custom-input-group">
+      <input type="number" id="customLatencyInput" placeholder="Custom ms" min="500">
+      <button onclick="setCustomLatency()">Set</button>
+    </div>
+
+    <button class="btn-close" onclick="closeMenu('latencyOverlay', 'latencyModal')">Cancel</button>
+  </div>
 </div>
 
 <script>
@@ -158,6 +275,8 @@ let state = {
 };
 
 let hasCelebrated = false;
+let syncLatency = 5000; // Default to High Latency
+let syncInterval = null;
 
 // --- CANVAS CONFETTI ---
 const canvas = document.getElementById("fx");
@@ -223,8 +342,7 @@ function celebrate() {
 // --- FIREBASE LOGIC ---
 async function loadData() {
   try {
-    // The "?_t=" adds a random timestamp so the browser NEVER caches the data. 
-    // This perfectly fixes the syncing issue across multiple devices!
+    // The "?_t=" completely bypasses cache to guarantee perfect syncing
     let r = await fetch(firebaseURL + "?_t=" + Date.now());
     let d = await r.json();
     
@@ -234,7 +352,6 @@ async function loadData() {
       state.startTime = d.startTime || null;
       state.goal = d.goal || 3600000;
     } else {
-      // If data was cleared by hitting "Done", reset everything locally
       state.total = 0;
       state.running = false;
       state.startTime = null;
@@ -243,6 +360,11 @@ async function loadData() {
   } catch (e) {
     console.error("Firebase connection error.");
   }
+}
+
+function startPolling() {
+  if (syncInterval) clearInterval(syncInterval);
+  syncInterval = setInterval(loadData, syncLatency);
 }
 
 // --- TIMER LOGIC ---
@@ -264,15 +386,15 @@ function updateUI() {
   const notRunningView = document.getElementById("notRunningView");
   const runningView = document.getElementById("runningView");
 
-  // Logic to show "Not Running" screen
+  // Show "Not Running" screen
   if (state.total === 0 && !state.running) {
     notRunningView.style.display = "block";
     runningView.style.display = "none";
     hasCelebrated = false;
-    return; // Stop updating the rest of the UI
+    return; 
   }
 
-  // Logic to show Active Run screen
+  // Show Active Run screen
   notRunningView.style.display = "none";
   runningView.style.display = "block";
 
@@ -292,10 +414,8 @@ function updateUI() {
     goalText.innerText = `${Math.ceil(left / 60000)} min left`;
     
     if (state.running) {
-      // Calculate estimated finish time
       let finishDate = new Date(Date.now() + left);
       let timeString = finishDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-      
       etaText.innerText = `Estimated finish: ${timeString}`;
       etaText.style.color = "var(--green)";
     } else {
@@ -312,15 +432,59 @@ function updateUI() {
   if (liveTime < state.goal) hasCelebrated = false;
 }
 
+// --- LATENCY CONTROLS ---
+function changeLatency(ms) {
+  syncLatency = ms;
+  
+  let label = "Custom";
+  if (ms === 1000) label = "Low";
+  if (ms === 2500) label = "Medium";
+  if (ms === 5000) label = "High";
+
+  document.getElementById("latencyBtnText").innerText = `Sync Latency: ${label} (${ms}ms)`;
+  
+  startPolling(); // Restart the polling with new speed
+  closeMenu('latencyOverlay', 'latencyModal');
+}
+
+function setCustomLatency() {
+  let val = parseInt(document.getElementById("customLatencyInput").value);
+  if (val && val >= 500) { // Limit to 500ms minimum to prevent browser freezing
+    changeLatency(val);
+    document.getElementById("customLatencyInput").value = "";
+  }
+}
+
+// --- MODAL MENU LOGIC ---
+function openMenu(overlayId, modalId) {
+  const overlay = document.getElementById(overlayId);
+  const modal = document.getElementById(modalId);
+  overlay.style.display = "flex";
+  setTimeout(() => {
+    overlay.style.opacity = "1";
+    modal.style.transform = "translateY(0)";
+  }, 10);
+}
+
+function closeMenu(overlayId, modalId) {
+  const overlay = document.getElementById(overlayId);
+  const modal = document.getElementById(modalId);
+  overlay.style.opacity = "0";
+  modal.style.transform = "translateY(20px)";
+  setTimeout(() => {
+    overlay.style.display = "none";
+  }, 300);
+}
+
 // --- INITIALIZATION ---
 async function init() {
-  await loadData(); // Initial load
+  await loadData(); 
   
-  // Update the UI incredibly smoothly 30 times a second locally
+  // Updates the UI incredibly smoothly 30 times a second locally
   setInterval(updateUI, 33);
   
-  // Ping Firebase every 5 seconds to stay perfectly in sync with the Controller
-  setInterval(loadData, 5000); 
+  // Starts polling the database based on the selected latency
+  startPolling(); 
 }
 
 init();
