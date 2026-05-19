@@ -88,6 +88,30 @@
       to { transform: rotate(360deg); }
     }
 
+    /* CUSTOM ALERT (TOAST) */
+    .custom-alert {
+      position: fixed;
+      top: -100px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-left: 5px solid var(--red);
+      color: white;
+      padding: 16px 24px;
+      border-radius: 12px;
+      font-size: 22px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.8);
+      z-index: 999999;
+      transition: top 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    .custom-alert.show {
+      top: 30px;
+    }
+
     /* Black Theme Card */
     .card {
       width: min(500px, 92vw);
@@ -292,6 +316,11 @@
   <div class="loading-subtext">Contacting server...</div>
 </div>
 
+<!-- CUSTOM IN-APP ALERT (TOAST) -->
+<div class="custom-alert" id="customAlert">
+  Please wait 5 seconds between clicks!
+</div>
+
 <canvas id="fx"></canvas>
 
 <div class="card">
@@ -316,7 +345,7 @@
   <div class="latency-link" id="latencyBtnText" onclick="openMenu('latencyOverlay', 'latencyModal')">Sync Interval</div>
   
   <div class="goal-controls" id="goalControls">
-    <button class="btn-add" onclick="addFive()">+5 Minutes</button>
+    <button class="btn-add" id="addFiveBtn" onclick="addFive()">+5 Minutes</button>
     <button class="btn-done" onclick="finishWorkout()">Done</button>
   </div>
 </div>
@@ -326,8 +355,9 @@
   <div class="modal" id="goalModal">
     <h3>Set Daily Goal</h3>
     <button onclick="setGoal(30)">30 Minutes</button>
-    <button onclick="setGoal(45)">45 Minutes</button>
-    <button onclick="setGoal(60)">60 Minutes</button>
+    <button onclick="setGoal(60)">1 Hour</button>
+    <button onclick="setGoal(90)">1 Hour, 30 Minutes</button>
+    <button onclick="setGoal(0)">No Goal</button>
     
     <div class="custom-input-group">
       <input type="number" id="customGoalHours" placeholder="Hrs" min="0">
@@ -364,26 +394,45 @@
 // --- SETTINGS ---
 const firebaseURL = "https://laurel-s-treadmill-workout-default-rtdb.firebaseio.com/treadmill.json";
 const CELEBRATION_DURATION = 5000;
+const DEFAULT_GOAL_MINUTES = 90; // Edit this to change default goal
 
 let state = {
   total: 0,
   running: false,
   startTime: null,
-  goal: 3600000
+  goal: DEFAULT_GOAL_MINUTES * 60000 
 };
 
 let hasCelebrated = false;
 let syncLatency = 5000;
 let syncInterval = null;
 
+// TIMERS FOR RACE CONDITION PROTECTION
+let lastStartToggleTime = 0; 
+let lastActionTime = 0; 
+let alertTimeout = null; 
+
+// FIREBASE UPLOAD QUEUE PROTECTION
+let isSaving = false;
+let needsAnotherSave = false;
+
+// --- CUSTOM ALERT LOGIC ---
+function showAlert(message) {
+  const alertBox = document.getElementById("customAlert");
+  alertBox.innerText = message;
+  alertBox.classList.add("show");
+
+  if (alertTimeout) clearTimeout(alertTimeout);
+  alertTimeout = setTimeout(() => {
+    alertBox.classList.remove("show");
+  }, 3000); 
+}
+
 // --- LOADING SCREEN ---
 function hideLoadingScreen() {
   const loading = document.getElementById("loadingScreen");
   loading.classList.add("hidden");
-
-  setTimeout(() => {
-    loading.style.display = "none";
-  }, 350);
+  setTimeout(() => { loading.style.display = "none"; }, 350);
 }
 
 // --- CANVAS CONFETTI ---
@@ -395,7 +444,6 @@ function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 }
-
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
@@ -413,14 +461,12 @@ class Particle {
     this.tiltAngle = 0;
     this.tiltAngleInc = (Math.random() * 0.07) + 0.05;
   }
-
   update() {
     this.tiltAngle += this.tiltAngleInc;
     this.y += this.vy;
     this.x += Math.sin(this.tiltAngle) * 2;
     this.tilt = Math.sin(this.tiltAngle) * 15;
   }
-
   draw() {
     ctx.beginPath();
     ctx.lineWidth = this.size;
@@ -433,7 +479,6 @@ class Particle {
 
 function celebrate() {
   if (hasCelebrated) return;
-
   hasCelebrated = true;
   let end = Date.now() + CELEBRATION_DURATION;
   
@@ -441,16 +486,12 @@ function celebrate() {
     if (Date.now() < end && particles.length < 150) {
       particles.push(new Particle(), new Particle());
     }
-
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
     particles.forEach((p, index) => {
       p.update();
       p.draw();
-
       if (p.y > canvas.height) particles.splice(index, 1);
     });
-
     if (particles.length > 0) requestAnimationFrame(frame);
   }());
 }
@@ -461,16 +502,20 @@ async function loadData() {
     let r = await fetch(firebaseURL + "?_t=" + Date.now());
     let d = await r.json();
     
+    // RACE CONDITION FIX: Ignore incoming data if the user clicked a button in the last 4 seconds
+    // This stops background checks from overriding the screen before a save is fully completed.
+    if (Date.now() - lastActionTime < 4000) return;
+
     if (d) {
       state.total = d.total || 0;
       state.running = d.running || false;
       state.startTime = d.startTime || null;
-      state.goal = d.goal || state.goal;
+      state.goal = d.goal !== undefined ? d.goal : (DEFAULT_GOAL_MINUTES * 60000);
     } else {
       state.total = 0;
       state.running = false;
       state.startTime = null;
-      state.goal = 3600000;
+      state.goal = DEFAULT_GOAL_MINUTES * 60000;
     }
   } catch(e) {
     console.error("Firebase load failed.");
@@ -478,6 +523,14 @@ async function loadData() {
 }
 
 async function saveData() {
+  // QUEUE FIX: Prevents overlapping uploads if you click super fast
+  if (isSaving) {
+    needsAnotherSave = true; 
+    return;
+  }
+  
+  isSaving = true;
+  
   try {
     await fetch(firebaseURL, {
       method: "PUT",
@@ -485,6 +538,14 @@ async function saveData() {
     });
   } catch(e) {
     console.error("Firebase save failed.");
+  }
+  
+  isSaving = false;
+  
+  // If clicks happened while saving, upload the newest data now
+  if (needsAnotherSave) {
+    needsAnotherSave = false;
+    saveData();
   }
 }
 
@@ -499,60 +560,67 @@ function formatTime(ms) {
   let h = Math.floor(s / 3600);
   let m = Math.floor((s % 3600) / 60);
   let sec = s % 60;
-
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
 
 function updateUI() {
   let liveTime = state.total;
-
   if (state.running && state.startTime) {
     liveTime += Date.now() - state.startTime;
   }
 
   document.getElementById("time").innerText = formatTime(liveTime);
 
-  let percent = Math.min((liveTime / state.goal) * 100, 100);
-  document.getElementById("bar").style.width = percent + "%";
-
-  let left = Math.max(state.goal - liveTime, 0);
-
   const goalText = document.getElementById("goalText");
   const etaText = document.getElementById("etaText");
   const goalControls = document.getElementById("goalControls");
+  const addFiveBtn = document.getElementById("addFiveBtn");
+  const bar = document.getElementById("bar");
 
-  if (left > 0) {
-    goalText.innerText = `${Math.ceil(left / 60000)} min left`;
-    
-    if (state.running) {
-      let finishDate = new Date(Date.now() + left);
-
-      let timeString = finishDate.toLocaleTimeString([], {
-        hour: 'numeric',
-        minute: '2-digit'
-      });
-
-      etaText.innerText = `Estimated finish: ${timeString}`;
-      etaText.style.color = "var(--green)";
-    } else if (state.total > 0) {
-      etaText.innerText = "Paused";
-      etaText.style.color = "var(--orange)";
-    } else {
-      etaText.innerText = "";
-    }
-
-    goalControls.style.display = "none";
-    hasCelebrated = false;
-  } else {
-    goalText.innerText = "Goal Reached!";
-    etaText.innerText = "";
+  // FREESTYLE MODE LOGIC
+  if (state.goal === 0) {
+    bar.style.width = "0%";
+    goalText.innerText = "Freestyle Mode";
+    etaText.innerText = "Running without a goal";
+    etaText.style.color = "var(--text-muted)";
     goalControls.style.display = "flex";
+    addFiveBtn.style.display = "none"; 
+    hasCelebrated = false;
+  } 
+  // STANDARD GOAL LOGIC
+  else {
+    let percent = Math.min((liveTime / state.goal) * 100, 100);
+    bar.style.width = percent + "%";
+    addFiveBtn.style.display = "block"; 
 
-    if (!hasCelebrated) celebrate();
+    let left = Math.max(state.goal - liveTime, 0);
+
+    if (left > 0) {
+      goalText.innerText = `${Math.ceil(left / 60000)} min left`;
+      
+      if (state.running) {
+        let finishDate = new Date(Date.now() + left);
+        let timeString = finishDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        etaText.innerText = `Estimated finish: ${timeString}`;
+        etaText.style.color = "var(--green)";
+      } else if (state.total > 0) {
+        etaText.innerText = "Paused";
+        etaText.style.color = "var(--orange)";
+      } else {
+        etaText.innerText = "";
+      }
+
+      goalControls.style.display = "none";
+      hasCelebrated = false;
+    } else {
+      goalText.innerText = "Goal Reached!";
+      etaText.innerText = "";
+      goalControls.style.display = "flex";
+      if (!hasCelebrated) celebrate();
+    }
   }
 
   const btn = document.getElementById("mainBtn");
-
   if (state.running) {
     btn.innerText = "STOP";
     btn.classList.add("stop");
@@ -563,7 +631,30 @@ function updateUI() {
 }
 
 // --- CONTROLS ---
+
+// Helper function to check 1-second spam cooldown for general buttons
+function canProceedGeneral() {
+  const now = Date.now();
+  if (now - lastActionTime < 1000) {
+    showAlert("Slowing down! Give it a second.");
+    return false;
+  }
+  lastActionTime = now;
+  return true;
+}
+
 async function toggleStart() {
+  const now = Date.now();
+  
+  // Strict 5-Second Cooldown for Start/Stop
+  if (now - lastStartToggleTime < 5000) {
+    showAlert("Please wait 5 seconds between start/stop clicks!");
+    return;
+  }
+  
+  lastStartToggleTime = now;
+  lastActionTime = now; // Also log this as a general action
+
   if (!state.running) {
     state.startTime = Date.now();
     state.running = true;
@@ -578,73 +669,70 @@ async function toggleStart() {
 }
 
 async function setGoal(mins) {
+  if (!canProceedGeneral()) return;
+
   state.goal = mins * 60000;
-
   closeMenu('goalOverlay', 'goalModal');
-
   updateUI();
   await saveData(); 
 }
 
 async function setCustomGoal() {
+  if (!canProceedGeneral()) return;
+
   let hrs = parseInt(document.getElementById("customGoalHours").value) || 0;
   let mins = parseInt(document.getElementById("customGoalMins").value) || 0;
-  
   let totalMins = (hrs * 60) + mins;
 
-  if (totalMins > 0) {
+  if (totalMins >= 0) {
     state.goal = totalMins * 60000;
     
     document.getElementById("customGoalHours").value = "";
     document.getElementById("customGoalMins").value = "";
     
     closeMenu('goalOverlay', 'goalModal');
-
     updateUI();
     await saveData(); 
   }
 }
 
 async function addFive() {
-  state.goal += 5 * 60000;
+  if (!canProceedGeneral()) return;
 
+  state.goal += 5 * 60000;
   updateUI();
   await saveData(); 
 }
 
 async function finishWorkout() {
+  if (!canProceedGeneral()) return;
+
+  // SMOOTH RESET FIX: Clears local state and saves without reloading the page, which prevents upload interruptions!
   state = {
     total: 0,
     running: false,
     startTime: null,
-    goal: 3600000 
+    goal: DEFAULT_GOAL_MINUTES * 60000 
   };
 
   hasCelebrated = false;
-
+  particles = []; // Clear confetti
+  ctx.clearRect(0, 0, canvas.width, canvas.height); // Wipe canvas
+  
+  updateUI();
   await saveData();
-  window.location.reload();
 }
 
 // --- LATENCY CONTROLS ---
 function changeLatency(ms) {
   syncLatency = ms;
-  
-  let label = "Custom";
-
-  if (ms === 1000) label = "Low";
-  if (ms === 2500) label = "Medium";
-  if (ms === 5000) label = "High";
-
-  document.getElementById("latencyBtnText").innerText = `Latency`;
-  
+  document.getElementById("latencyBtnText").innerText = `Sync Interval`;
   startPolling();
   closeMenu('latencyOverlay', 'latencyModal');
 }
 
 function setCustomLatency() {
   let val = parseInt(document.getElementById("customLatencyInput").value);
-
   if (val && val >= 500) {
     changeLatency(val);
     document.getElementById("customLatencyInput").value = "";
@@ -655,9 +743,7 @@ function setCustomLatency() {
 function openMenu(overlayId, modalId) {
   const overlay = document.getElementById(overlayId);
   const modal = document.getElementById(modalId);
-
   overlay.style.display = "flex";
-
   setTimeout(() => {
     overlay.style.opacity = "1";
     modal.style.transform = "translateY(0)";
@@ -667,10 +753,8 @@ function openMenu(overlayId, modalId) {
 function closeMenu(overlayId, modalId) {
   const overlay = document.getElementById(overlayId);
   const modal = document.getElementById(modalId);
-
   overlay.style.opacity = "0";
   modal.style.transform = "translateY(20px)";
-
   setTimeout(() => {
     overlay.style.display = "none";
   }, 300);
@@ -679,15 +763,9 @@ function closeMenu(overlayId, modalId) {
 // --- INITIALIZATION ---
 async function init() {
   await loadData();
-
   updateUI();
-
-  setTimeout(() => {
-    hideLoadingScreen();
-  }, 2000);
-  
+  setTimeout(() => { hideLoadingScreen(); }, 2000);
   setInterval(updateUI, 33);
-
   startPolling();
 }
 
